@@ -1,0 +1,24 @@
+---
+title: "Causal Forest"
+author: "Filip Mellgren"
+date: '2020-06-08'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Outline
+In this project, I want to learn a bit about causal forests. The task is open ended and the  purpose is to learn while having fun. Consequently, I am not 100 percent sure where to take this project yet. Nontheless, here is a rough plan:
+
+* Create a population as defined by some distribution.
+* Introduce the notion of a treatment that we want to evaluate as scientists
+    * This includes power calculation and selection of appropriately sized treatment group
+    * Note the loss of power when looking for heterogenous treatment effects.
+* Under the hood, define the treatment effect in such a way that individuals are affected differently.
+* Carry out standard ATE calculation and evaluate results.
+* Go a little bit deeper and see what can be done with a causal forest algorithm.
+
+By doing this, I can hopefully obtain some knowledge on how to think about heterogenous treatment effects and good practice when designing experiments where we may care about how sub groups are affected differently. 
+
