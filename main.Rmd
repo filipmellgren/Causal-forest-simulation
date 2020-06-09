@@ -22,3 +22,72 @@ In this project, I want to learn a bit about causal forests. The task is open en
 
 By doing this, I can hopefully obtain some knowledge on how to think about heterogenous treatment effects and good practice when designing experiments where we may care about how sub groups are affected differently. 
 
+# Heterogenous treatment effects
+Heterogenous treatment effects are typically studied using interaction terms that moderate a treatment variable. However, with many covariates, the number of possible combinations of interactrion effects makes the study loose statistical power, even before considering non-linear interaction effects.
+
+```{r}
+library(tidyverse); theme_set(theme_minimal())
+library(MASS)
+```
+
+# Generate the population
+
+God mode:
+
+```{r population}
+N <- 10^4
+n_cols <- 10
+covars <- sample(1:n_cols^2, n_cols^2)
+Sigma <- matrix(covars,n_cols,n_cols) # covariance matrix. Diagonal indicates variances
+
+# Ensure positive definiteness:
+Sigma <-  t(Sigma) %*% Sigma
+
+X <- mvrnorm(n = N, rep(0, n_cols), Sigma)
+
+df <- X %>% as_tibble()
+```
+
+# Scientific preparations
+
+```{r power_calc}
+effect_size.min <- 0.1 # Lowest effect size we care about detecting.
+sig.level <- 0.005 # Type I error porbability. 0.005 is best practice in behavioural economics
+power <- 0.8 # 1 - Type II error probability. With 20% probability, we fail to reject false null, given the effect size above.
+sd <- 1
+
+power_n <-  power.t.test(delta = effect_size.min, sd = sd, sig.level = sig.level, power = power, 
+                               type = "two.sample", 
+                               alternative = "two.sided")$n # number of observations required per group
+```
+
+```{r sample}
+df.samp <- sample_n(df, round(2*power_n))
+```
+
+Having drawn a sample from our population, we wish to first gain a bit of an understanding of the data available. For simplicity, we look at densities and bivariate linear relationships between our variables.
+
+```{r EDA}
+# Density of distributions
+df.g <- df.samp %>% gather(key = "Variable", value = "Value")
+df.g %>% ggplot(aes(x = Value, fill = Variable, alpha = 0.5)) + geom_density()
+ggsave("images/densities.png")
+
+# Bivariate relationships
+cormat <- round(cor(df.samp),2)
+melted_cormat <- reshape2::melt(cormat)
+melted_cormat %>% ggplot(aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile() +
+  labs(title = "Correlation matrix", y = " ", x = " ")
+```
+
+```{r treatment}
+
+
+```
+
+
+
+# Resources
+Lechner on arxiv: https://arxiv.org/pdf/1812.09487.pdf
+
