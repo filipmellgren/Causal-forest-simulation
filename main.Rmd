@@ -35,7 +35,7 @@ library(MASS)
 God mode:
 
 ```{r population}
-N <- 10^4
+N <- 10^5
 n_cols <- 10
 covars <- sample(1:n_cols^2, n_cols^2)
 Sigma <- matrix(covars,n_cols,n_cols) # covariance matrix. Diagonal indicates variances
@@ -54,7 +54,7 @@ df <- X %>% as_tibble()
 effect_size.min <- 0.1*mean(df$V1) # Lowest effect size we care about detecting.
 sig.level <- 0.005 # Type I error porbability. 0.005 is best practice in behavioural economics
 power <- 0.8 # 1 - Type II error probability. With 20% probability, we fail to reject false null, given the effect size above.
-sd <- 0.01*sd(df$V1)
+sd <- 0.5
 
 power_n <-  power.t.test(delta = effect_size.min, sd = sd, sig.level = sig.level, power = power, 
                                type = "two.sample", 
@@ -63,30 +63,16 @@ power_n <- round(power_n)
 ```
 
 ```{r sample}
-df.samp <- sample_n(df, 2*power_n)
-```
-
-Having drawn a sample from our population, we wish to first gain a bit of an understanding of the data available. For simplicity, we look at densities and bivariate linear relationships between our variables.
-
-```{r EDA}
-# Density of distributions
-df.g <- df.samp %>% gather(key = "Variable", value = "Value")
-df.g %>% ggplot(aes(x = Value, fill = Variable, alpha = 0.5)) + geom_density()
-ggsave("images/densities.png")
-
-# Bivariate relationships
-cormat <- round(cor(df.samp),2)
-melted_cormat <- reshape2::melt(cormat)
-melted_cormat %>% ggplot(aes(x=Var1, y=Var2, fill=value)) + 
-  geom_tile() +
-  labs(title = "Correlation matrix", y = " ", x = " ")
+test_set.size <- 0.1
+n <- round(2*power_n*(1+test_set.size))
+df.samp <- sample_n(df, n)
 ```
 
 ```{r treatment}
 # Randomly assign treatment within sample:
-Treat1 <- rep(1, power_n)
-Treat0 <- rep(0, power_n)
-Treat <- sample_n(data.frame(c(Treat1, Treat0)), power_n*2)
+Treat1 <- rep(1, n/2)
+Treat0 <- rep(0,n/2)
+Treat <- sample_n(data.frame(c(Treat1, Treat0)),n)
 
 df.samp <- as_tibble(cbind(df.samp, Treat$c.Treat1..Treat0.))
 
@@ -95,28 +81,90 @@ df.samp <- df.samp %>% rename(Treat = "Treat$c.Treat1..Treat0.")
 
 At this point, the scientist injects a treatment into the treatment group, so let's play mother nature again and add an effect which heterogenously affects the population. That is, different people will react differently to the treatment.
 
-```{r}
+```{r effect}
+# TODO: vary heterogeneity of treatment effects
 effect_size <- 1.2*effect_size.min # Slightly stronger than what we would minimally care about
-df.samp$random_change <- rnorm(n = 2*power_n, sd = sd)
+df.samp$random_change <- rnorm(n = n, sd = sd)
 
-df.samp <-df.samp %>% mutate(V1_post = V1 + random_change +
-                               Treat*effect_size*(1 + 0.01*V2/sd(V2) - 0.01*V3^2/sd(V3) + 0.01*V2*V3/(sd(V2)*sd(V3))))
+df.samp <-df.samp %>% mutate(V1_post = random_change +
+                               Treat*effect_size*(1 + 0.1*V2/sd(V2) - 0.1*V3^2/sd(V3) + 0.05*V2*V3/(sd(V2)*sd(V3))))
 ```
 
-Now that nature has run its course, let's see whether we first of all can detect the change using classical methods for obtaining the average treatment effect.
+```{r split_train_test}
+train <- sample_n(df.samp, 2*power_n)
+test <- anti_join(df.samp, train)
+```
+
+
+Having drawn a sample from our population, we wish to first gain a bit of an understanding of the data available. For simplicity, we look at densities and bivariate linear relationships between our variables.
+
+```{r EDA}
+# Density of distributions
+df.g <- train %>% dplyr::select(-c(random_change, Treat, V1_post)) %>% gather(key = "Variable", value = "Value")
+df.g %>% ggplot(aes(x = Value, fill = Variable, alpha = 0.5)) + geom_density()
+ggsave("images/densities.png")
+
+# Bivariate relationships
+cormat <- round(cor(train),2)
+melted_cormat <- reshape2::melt(cormat)
+melted_cormat %>% ggplot(aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile() +
+  labs(title = "Correlation matrix", y = " ", x = " ")
+```
+
+
+Now that the treatment effects have kicked in and we've seen the covariates' distribution, let's see whether we first of all can detect the change using classical methods for obtaining the average treatment effect.
 
 ```{r}
-df.samp %>% ggplot(aes(x = Treat, y = V1_post, color = as.factor(Treat))) + geom_boxplot()
-df.samp %>% ggplot(aes(x = V1_post, color = as.factor(Treat))) + geom_density()
+train %>% ggplot(aes(x = Treat, y = V1_post, color = as.factor(Treat))) + geom_boxplot()
+train %>% ggplot(aes(x = V1_post, color = as.factor(Treat))) + geom_density()
 
 # Linear regression without covariates is ok because the expected conditional mean varies only with treatment status
-linear_model <- lm(V1_post ~ V1 + Treat, data = df.samp)
+linear_model <- lm(V1_post ~ Treat, data = train)
 summary(linear_model)
 
+
 ```
-We find a statistically significant negative effect using the classic toolkit. Now let's turn to the causal forest and see whether we can learn about how it varies across different segments.
+We find a statistically significant negative effect using the classic toolkit. Now let's turn to the conditional average treatment effect (CATE) and see whether we can learn about how it varies across different subgroups of the population.
 
 # Causal Forest
+Why do we need a causal forest in the first place when we can simply look at moderating covariates via interaction terms?
+
+* First of all, without a preregistration, checking for significant interactions is akin to p-hacking as we test multiple hypothesis without adjusting the corresponding level of the test. 
+* If we do adjust the level of the test using Bonferroni corrections, we lose power instead as there are potentially many hypotheses to be tested.
+* Preregistering which interaction effects is difficult, as we may not know a priori which subgroups will be relevant to the treatment effect.
+
+
+With this motivation, we now seek to assess whether it is a suitable method for our setup. There are two assumptions required for causal forests to enable them to identify the CATE.
+
+* Unconfoundedness. Conditional on what we control for, knowing the treatment status provide us with no additional information a priori about the value of the dependent variable. This assumption is fulfilled as treatment was randomly assigned and we have full compliance.
+* Overlap. No subpopulation lies entirely within the treatment or the control group. This is most likely fulfilled because we randomise overa a large sample.
+
+The treatment assignment also needs to be binary.
+
+```{r causal_forest}
+library(grf)
+X <- train %>% dplyr::select(-c(V1_post, Treat)) %>%as.matrix()
+Y <- train %>% dplyr::select(V1_post) %>% as.matrix()
+W <- train %>% dplyr::select(Treat) %>% as.matrix()
+forest <- causal_forest(X, Y, W)
+```
+
+```{r predict}
+# predict on a test set
+X.test <- test %>% dplyr::select(-c(V1_post, Treat)) %>% as.matrix()
+Y.test <- test %>% dplyr::select(V1_post) %>% as.matrix()
+
+p.lm <- predict(linear_model, test)
+p.forest <- predict(forest, X.test)
+
+forest.RMSE <- sum(p.forest$predictions - Y.test)^2
+lm.RMSE <- sum(p.lm - Y.test)^2
+
+# https://rdrr.io/cran/grf/man/causal_forest.html
+```
+
+
 
 # Resources
 Lechner on arxiv: https://arxiv.org/pdf/1812.09487.pdf
